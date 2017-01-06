@@ -1,0 +1,105 @@
+///> Include FFMpeg
+#define _CRT_SECURE_NO_DEPRECATE
+#pragma warning(disable:4996)
+
+#include <iostream>
+
+///> Include FFMpeg
+extern "C" {
+#include <libavformat/avformat.h>
+#include <libavcodec/avcodec.h>
+#include <libavutil/avutil.h>
+#include <libswscale/swscale.h>
+#include <libavformat/avio.h>
+#include <libavutil/opt.h>
+
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <math.h>
+#include <libavutil/opt.h>
+#include <libavutil/mathematics.h>
+#include <libswscale/swscale.h>
+#include <libswresample/swresample.h>
+}
+
+///> Library Link On Windows System
+#pragma comment( lib, "avformat.lib" )   
+#pragma comment( lib, "avutil.lib" )
+#pragma comment( lib, "avcodec.lib" )
+
+const char *szFilePath = "./Test_Video.mkv";
+
+int main() {
+
+	av_register_all();
+
+	// 파일 로드
+	AVFormatContext* f_ctx = NULL;
+	AVCodec* dec;
+	AVCodecContext* dec_ctx;
+	avformat_open_input(&f_ctx, szFilePath, NULL, NULL);
+	int vst_idx = av_find_best_stream(f_ctx, AVMEDIA_TYPE_VIDEO, -1, -1, &dec, 0);
+	dec_ctx = f_ctx->streams[vst_idx]->codec;
+	avcodec_open2(dec_ctx, dec, NULL);
+
+	av_log(NULL, AV_LOG_INFO, "File [%s] Open Success\n", szFilePath);
+
+	int ret = avformat_find_stream_info(f_ctx, NULL);
+	av_log(NULL, AV_LOG_INFO, "Get Stream Information Success\n");
+
+	// 디코딩 (대상 비디오/오디오 검색)
+	int nVSI = -1; ///> Video Stream Index
+	int nASI = -1; ///> Audio Stream Index
+	nVSI = av_find_best_stream(f_ctx, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
+	///> 오디오 스트림 찾기 (비디오 스트림 있다면 연관된)
+	nASI = av_find_best_stream(f_ctx, AVMEDIA_TYPE_AUDIO, -1, nVSI, NULL, 0);
+
+	// 디코딩 설정
+	AVCodecContext *pVCtx = f_ctx->streams[nVSI]->codec;
+	AVCodecContext *pACtx = f_ctx->streams[nASI]->codec;
+	AVFrame *pVFrame = avcodec_alloc_frame();
+	AVFrame *pAFrame = avcodec_alloc_frame();
+	int bGotPicture = 0;
+	int bGotSound = 0;
+	AVCodec *pVideoCodec = avcodec_find_decoder(f_ctx->streams[nVSI]->codec->codec_id);
+	if (pVideoCodec == NULL) {
+		av_log(NULL, AV_LOG_ERROR, "No Decoder was Found\n");
+		exit(-1);
+	}
+	///> Initialize Codec Context as Decoder
+	if (avcodec_open2(f_ctx->streams[nVSI]->codec, pVideoCodec, NULL) < 0) {
+		av_log(NULL, AV_LOG_ERROR, "Fail to Initialize Decoder\n");
+		exit(-1);
+	}
+
+	// 디코딩
+	AVPacket packet;
+	while (av_read_frame(f_ctx, &packet) >= 0) {
+		if (packet.stream_index == nVSI) {
+			// Decode Video
+			avcodec_decode_video2(dec_ctx, pVFrame, &bGotPicture, &packet);
+			if (bGotPicture) {
+				// Ready to Render Image
+			}
+		}
+		else if (packet.stream_index == nASI) {
+			// Decode Audio
+			avcodec_decode_audio4(dec_ctx, pAFrame, &bGotSound, &packet);
+			if (bGotSound) {
+				// Ready to Render Sound
+			}
+		}
+
+		// Free the packet that was allocated by av_read_frame
+		av_free_packet(&packet);
+	}
+
+
+
+	avformat_close_input(&f_ctx);
+
+	avformat_network_deinit();
+
+	return 0;
+}

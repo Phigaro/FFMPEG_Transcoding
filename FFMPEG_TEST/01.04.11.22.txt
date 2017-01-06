@@ -1,0 +1,142 @@
+///> Include FFMpeg
+#define _CRT_SECURE_NO_DEPRECATE
+#pragma warning(disable:4996)
+
+#include <fstream>
+
+extern "C" {
+#include <libswscale\/swscale.h>
+#include <libavformat/avformat.h>
+#include <libavformat\avio.h>
+#include <libavcodec/avcodec.h>
+#include <libavfilter/avfiltergraph.h>
+#include <libavfilter/buffersink.h>
+#include <libavfilter/buffersrc.h>
+#include <libavutil/opt.h>
+#include <Windows.h>
+}
+
+///> Library Link On Windows System
+#pragma comment( lib, "avformat.lib" )	
+#pragma comment( lib, "avutil.lib" )
+#pragma comment( lib, "avcodec.lib" )
+
+#include <iostream>
+using namespace std;
+
+static AVFormatContext *fmt_ctx = NULL;
+static AVCodecContext *dec_ctx = NULL;
+static int vst_idx = -1;
+
+void open_input_file();
+void close_input_file();
+void encode_video();
+
+int main() {
+	open_input_file();
+	encode_video();
+
+
+	return 0;
+}
+
+void open_input_file()
+{
+
+	const char *szFilePath = "./Test_Video.mkv";
+	AVCodec *dec;
+
+	/* open input streams */
+	avformat_open_input(&fmt_ctx, szFilePath, NULL, NULL);
+
+	/* select the video stream */
+	vst_idx = av_find_best_stream(fmt_ctx, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
+	dec_ctx = fmt_ctx->streams[vst_idx]->codec;
+
+	/* init the video decoder */
+	avcodec_open2(dec_ctx, dec, NULL);
+}
+
+void close_input_file()
+{
+	for (int i = 0; i < fmt_ctx->nb_streams; i++) {
+		AVStream *st = fmt_ctx->streams[i];
+		avcodec_close(st->codec);
+	}
+	avformat_close_input(&fmt_ctx);
+}
+
+void encode_video()
+{
+	AVPacket pkt, outpkt;
+	AVFrame *frm;
+	int got_frame, got_output;
+
+	AVCodec *enc;
+	AVCodecContext *enc_ctx = NULL;
+
+	/* find the h.264 video encoder */
+	enc = avcodec_find_encoder(AV_CODEC_ID_H264);
+
+	enc_ctx = avcodec_alloc_context3(enc);
+
+	/* put sample parameters */
+	enc_ctx->bit_rate = 400000;
+	/* resolution must be a multiple of two */
+	enc_ctx->width = 352;
+	enc_ctx->height = 288;
+	/* frames per second */
+	AVRational T;
+	T.den = 1;
+	T.num = 25;
+	enc_ctx->time_base = T;
+	enc_ctx->gop_size = 10; /* emit one intra frame every ten frames */
+	enc_ctx->max_b_frames = 1;
+	enc_ctx->pix_fmt = AV_PIX_FMT_YUV420P;
+
+	/* init the video encoder */
+	avcodec_open2(enc_ctx, enc, NULL);
+
+	frm = av_frame_alloc();
+
+	while (1) {
+		av_read_frame(fmt_ctx, &pkt);
+
+		if (pkt.stream_index == vst_idx) {
+			avcodec_get_frame_defaults(frm);
+
+			/* decode the frame */
+			avcodec_decode_video2(dec_ctx, frm, &got_frame, &pkt);
+
+			if (got_frame) {
+				av_init_packet(&outpkt);
+				outpkt.data = NULL;
+				outpkt.size = 0;
+
+				/* encode the frame */
+				avcodec_encode_video2(enc_ctx, &outpkt, frm, &got_output);
+				if (got_output) {
+					/* write or send the frame */
+					av_free_packet(&outpkt);
+				}
+			}
+		}
+
+		av_free_packet(&pkt);
+	}
+	av_init_packet(&outpkt);
+	outpkt.data = NULL;
+	outpkt.size = 0;
+
+	/* get the delayed frames */
+	got_output = 1;
+	while (got_output) {
+		/* encode the frame */
+		avcodec_encode_video2(enc_ctx, &outpkt, frm, &got_output);
+		if (got_output) {
+			/* write or send the frame */
+			av_free_packet(&outpkt);
+		}
+	}
+	av_frame_free(&frm);
+}
