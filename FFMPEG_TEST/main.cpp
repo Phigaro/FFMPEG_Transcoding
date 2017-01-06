@@ -38,7 +38,7 @@ const char *AVCodecID2Str(AVCodecID id);
 void Stream_Info(AVFormatContext* pFmtCtx);
 void encoding(AVFrame* pVFrame, AVPacket packet);
 void audio_encoding(AVFrame* pAFrame, AVPacket packet);
-void audio_encoding_ex(AVFrame* pVFrame, AVPacket packet);
+void audio_encoding_ex();
 
 
 // Video_var
@@ -291,6 +291,7 @@ int main() {
 	double  result;
 	before = clock();
 
+	int cnt = 0;
 	AVPacket packet;
 	AVPacket Audio_packet;
 	while (av_read_frame(f_ctx, &packet) >= 0) {
@@ -299,38 +300,39 @@ int main() {
 			avcodec_decode_video2(dec_ctx, pVFrame, &bGotPicture, &packet);
 			if (bGotPicture) {
 				// Encode Video
-				cout << "Get Picture\n";
-				//encoding(pVFrame, packet);
+				//cout << "Get Picture\n";
+				encoding(pVFrame, packet);
 			}
 		}else if (packet.stream_index == nASI) {
 			avcodec_decode_audio4(Audio_dec_ctx, pAFrame, &bGotSound, &packet);
 			if (bGotSound) {
-				cout << "Get Sound\n";
+				//cout << "Get Sound\n";
 				int data_size = av_samples_get_buffer_size(NULL, Audio_codec_c->channels, pAFrame->nb_samples, Audio_codec_c->sample_fmt, 1);
 				// Encode Audio
-				fwrite(pAFrame->data[0], 1, data_size, Audio_f);
-				//audio_encoding(pAFrame, packet);
+				//fwrite(pAFrame->data[0], 1, data_size, Audio_f);
+				audio_encoding(pAFrame, packet);
 			}
-
 		}
 	}
 
-	//audio_encoding_ex(pAFrame, packet);
+	audio_encoding_ex();
 
 	//result = (double)(clock() - before) / CLOCKS_PER_SEC;
 	result = clock() - before;
 	printf("걸린시간은 %5.2f 입니다.\n", result);
 
+	
 
 	Stream_Info(f_ctx);
 
 	avformat_close_input(&f_ctx);
-
+	av_free(Audio_codec_c);
 	avformat_network_deinit();
 
 	system("pause");
 
 	fclose(Audio_f);
+	fclose(f);
 
 	return 0;
 }
@@ -364,7 +366,7 @@ void encoding(AVFrame* pVFrame, AVPacket packet) {
 	}
 	if (got_output) {
 		printf("Write frame %3d (size=%5d)\n", i, packet.size);
-		fwrite(packet.data, 1, packet.size, Audio_f);
+		fwrite(packet.data, 1, packet.size, f);
 		if (!ret && got_output && packet.size) {
 			packet.stream_index = 0;
 			/* Write the compressed frame to the media file. */
@@ -384,7 +386,7 @@ void encoding(AVFrame* pVFrame, AVPacket packet) {
 
 		if (got_output) {
 			printf("Write frame %3d (size=%5d) \n", i, pkt.size);
-			fwrite(pkt.data, 1, pkt.size, Audio_f);
+			fwrite(pkt.data, 1, pkt.size, f);
 			av_free_packet(&pkt);
 		}
 	}
@@ -407,10 +409,25 @@ void audio_encoding(AVFrame* pAFrame, AVPacket packet) {
 		fprintf(stderr, "Error encoding frame\n");
 		system("pause"); exit(1);
 	}
+	if (got_output) {
+		fwrite(packet.data, 1, packet.size, Audio_f);
+		av_free_packet(&packet);
+	}
 
+	for (got_output = 1; got_output; i++) {
+		ret = avcodec_encode_audio2(Audio_codec_c, &pkt, NULL, &got_output);
+		if (ret < 0) {
+			fprintf(stderr, "Error encoding Audio_frame\n");
+			system("pause"); exit(1);
+		}
+		if (got_output) {
+			fwrite(pkt.data, 1, pkt.size, Audio_f);
+			av_free_packet(&pkt);
+		}
+	}
+	
 	av_freep(&Audio_samples);
 	avcodec_free_frame(&Audio_frame);
-	av_free(Audio_codec_c);
 }
 
 ///> Print Stream Information
@@ -859,7 +876,7 @@ const char *AVCodecID2Str(AVCodecID id)
 	return "";
 }
 
-void audio_encoding_ex(AVFrame* pVFrame, AVPacket packet) {
+void audio_encoding_ex() {
 	float t, tincr;
 	int i, j, k;
 	/* Audio_frame containing input raw audio */
