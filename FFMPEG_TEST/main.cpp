@@ -3,11 +3,6 @@
 #define _CRT_SECURE_NO_DEPRECATE
 #pragma warning(disable:4996)
 
-
-#define INBUF_SIZE 4096
-#define AUDIO_INBUF_SIZE 20480 //20480
-#define AUDIO_REFILL_THRESH 4096
-
 ///> Include FFMpeg
 #include <stdlib.h>
 #include <stdio.h>
@@ -30,6 +25,17 @@ extern "C" {
 #include <libavutil/mathematics.h>		// math header
 #include <libswresample/swresample.h>	// Resample header
 }
+
+#define INBUF_SIZE 4096
+#define AUDIO_INBUF_SIZE 20480 //20480
+#define AUDIO_REFILL_THRESH 4096
+#define STREAM_DURATION   200.0
+#define STREAM_FRAME_RATE 25 /* 25 images/s */
+#define STREAM_NB_FRAMES  ((int)(STREAM_DURATION * STREAM_FRAME_RATE))
+#define STREAM_PIX_FMT    AV_PIX_FMT_YUV420P /* default pix_fmt */
+
+static int sws_flags = SWS_BICUBIC;
+
 ///> Library Link On Windows System
 #pragma comment( lib, "avformat.lib" )   
 #pragma comment( lib, "avutil.lib" )
@@ -71,6 +77,186 @@ int Audio_buffer_size;
 FILE *Audio_f;
 uint16_t *Audio_samples;
 AVCodecID Audio_Codec_id = AV_CODEC_ID_MP2;
+
+/* Add an output stream. */
+static AVStream *add_stream(AVFormatContext *oc, AVCodec **codec, enum AVCodecID codec_id) {
+	AVCodecContext *c;
+	AVStream *st;
+	/* find the encoder */
+	*codec = avcodec_find_encoder(codec_id);
+	if (!(*codec)) {
+		fprintf(stderr, "Could not find encoder for '%s'\n", avcodec_get_name(codec_id)
+		);
+		exit(1);
+	}
+	st = avformat_new_stream(oc, *codec);
+	if (!st) {
+		fprintf(stderr, "Could not allocate stream\n");
+		exit(1);
+	}
+	st->id = oc->nb_streams - 1;
+	c = st->codec;
+	switch ((*codec)->type) {
+	case AVMEDIA_TYPE_AUDIO:
+		c->sample_fmt = AV_SAMPLE_FMT_FLTP;
+		c->bit_rate = 64000;
+		c->sample_rate = 44100;
+		c->channels = 2;
+		break;
+	case AVMEDIA_TYPE_VIDEO:
+		c->codec_id = codec_id;
+		c->bit_rate = 400000;
+		/* Resolution must be a multiple of two. */
+		c->width = 352;
+		c->height = 288;
+		/* timebase: This is the fundamental unit of time (in seconds) in terms
+		* of which frame timestamps are represented. For fixed-fps content,
+		* timebase should be 1/framerate and timestamp increments should be
+		* identical to 1. */
+		c->time_base.den = STREAM_FRAME_RATE;
+		c->time_base.num = 1;
+		c->gop_size = 12;
+		/* emit one intra frame every twelve frames at most */
+		c->pix_fmt = STREAM_PIX_FMT;
+		if (c->codec_id == AV_CODEC_ID_MPEG2VIDEO) {
+			/* just for testing, we also add B frames */
+			c->max_b_frames = 2;
+		}        if (c->codec_id == AV_CODEC_ID_MPEG1VIDEO) {
+			/* Needed to avoid using macroblocks in which some coeffs overflow.
+			* This does not happen with normal video, it just happens here as
+			* the motion of the chroma plane does not match the luma plane. */
+			c->mb_decision = 2;
+		}
+		break;
+	default:
+		break;
+	}    /* Some formats want stream headers to be separate. */
+	if (oc->oformat->flags & AVFMT_GLOBALHEADER)
+		c->flags |= CODEC_FLAG_GLOBAL_HEADER;
+	return st;
+}
+
+/**************************************************************//* video output */
+static AVPicture src_picture, dst_picture;
+static void open_video(AVFormatContext *oc, AVCodec *codec, AVStream *st) {
+	int ret;
+	AVCodecContext *c = st->codec;
+	/* open the codec */
+	ret = avcodec_open2(c, codec, NULL);
+	if (ret < 0) {
+		fprintf(stderr, "Could not open video codec: %s\n", av_make_error_string((char*)AV_ERROR_MAX_STRING_SIZE, AV_ERROR_MAX_STRING_SIZE, ret));
+		exit(1);
+	}
+	/* allocate and init a re-usable frame */
+	frame = avcodec_alloc_frame();
+	if (!frame) {
+		fprintf(stderr, "Could not allocate video frame\n");
+		exit(1);
+	}    /* Allocate the encoded raw picture. */
+	ret = avpicture_alloc(&dst_picture, c->pix_fmt, c->width, c->height);
+	if (ret < 0) {
+		fprintf(stderr, "Could not allocate picture: %s\n", av_make_error_string((char*)AV_ERROR_MAX_STRING_SIZE, AV_ERROR_MAX_STRING_SIZE, ret));
+		exit(1);
+	}
+	/* If the output format is not YUV420P, then a temporary YUV420P
+	* picture is needed too. It is then converted to the required
+	* output format. */
+	if (c->pix_fmt != AV_PIX_FMT_YUV420P) {
+		ret = avpicture_alloc(&src_picture, AV_PIX_FMT_YUV420P, c->width, c->height);
+		if (ret < 0) {
+			fprintf(stderr, "Could not allocate temporary picture: %s\n", av_make_error_string((char*)AV_ERROR_MAX_STRING_SIZE, AV_ERROR_MAX_STRING_SIZE, ret));
+			exit(1);
+		}
+	}    /* copy data and linesize picture pointers to frame */
+	*((AVPicture *)frame) = dst_picture;
+}
+/* Prepare a dummy image. */
+
+static void fill_yuv_image(AVPicture *pict, int frame_index, int width, int height) {
+	int x, y, i;
+	i = frame_index;
+	/* Y */
+	for (y = 0; y < height; y++)
+		for (x = 0; x < width; x++)
+			pict->data[0][y * pict->linesize[0] + x] = x + y + i * 3;
+	/* Cb and Cr */
+	for (y = 0; y < height / 2; y++) {
+		for (x = 0; x < width / 2; x++) {
+			pict->data[1][y * pict->linesize[1] + x] = 128 + y + i * 2;
+			pict->data[2][y * pict->linesize[2] + x] = 64 + x + i * 5;
+		}
+	}
+}
+
+static void write_video_frame(AVFormatContext *oc, AVStream *st) {
+	int ret;    static struct SwsContext *sws_ctx;    AVCodecContext *c = st->codec;
+	if (frame_count >= STREAM_NB_FRAMES) {
+		/* No more frames to compress. The codec has a latency of a few
+		* frames if using B-frames, so we get the last frames by
+		* passing the same picture again. */
+	}
+	else {
+		if (c->pix_fmt != AV_PIX_FMT_YUV420P) {
+			/* as we only generate a YUV420P picture, we must convert it
+			* to the codec pixel format if needed */
+			if (!sws_ctx) {
+				sws_ctx = sws_getContext(c->width, c->height, AV_PIX_FMT_YUV420P, c->width, c->height, c->pix_fmt, sws_flags, NULL, NULL, NULL);
+				if (!sws_ctx) {
+					fprintf(stderr, "Could not initialize the conversion context\n");
+					exit(1);
+				}
+			}
+			fill_yuv_image(&src_picture, frame_count, c->width, c->height);
+			sws_scale(sws_ctx, (const uint8_t * const *)src_picture.data, src_picture.linesize, 0, c->height, dst_picture.data, dst_picture.linesize);
+		}
+		else {
+			fill_yuv_image(&dst_picture, frame_count, c->width, c->height);
+		}
+	}
+	if (oc->oformat->flags & AVFMT_RAWPICTURE) {
+		/* Raw video case - directly store the picture in the packet */
+		AVPacket pkt;
+		av_init_packet(&pkt);
+		pkt.flags |= AV_PKT_FLAG_KEY;
+		pkt.stream_index = st->index;
+		pkt.data = dst_picture.data[0];
+		pkt.size = sizeof(AVPicture);
+		ret = av_interleaved_write_frame(oc, &pkt);
+	}
+	else {
+		AVPacket pkt = { 0 };
+		int got_packet;
+		av_init_packet(&pkt);
+		/* encode the image */
+		ret = avcodec_encode_video2(c, &pkt, frame, &got_packet);
+		if (ret < 0) {
+			fprintf(stderr, "Error encoding video frame: %s\n", av_make_error_string((char*)AV_ERROR_MAX_STRING_SIZE, AV_ERROR_MAX_STRING_SIZE, ret));
+			exit(1);
+		}
+		/* If size is zero, it means the image was buffered. */
+		if (!ret && got_packet && pkt.size) {
+			pkt.stream_index = st->index;
+			/* Write the compressed frame to the media file. */
+			ret = av_interleaved_write_frame(oc, &pkt);
+		}
+		else {
+			ret = 0;
+		}
+	}    if (ret != 0) {
+		fprintf(stderr, "Error while writing video frame: %s\n", av_make_error_string((char*)AV_ERROR_MAX_STRING_SIZE, AV_ERROR_MAX_STRING_SIZE, ret)
+		);
+		exit(1);
+	}
+	frame_count++;
+
+}
+
+static void close_video(AVFormatContext *oc, AVStream *st) {
+	avcodec_close(st->codec);
+	av_free(src_picture.data[0]);
+	av_free(dst_picture.data[0]);
+	av_free(frame);
+}
 
 static int check_sample_fmt(AVCodec *codec, enum AVSampleFormat sample_fmt)
 {
@@ -214,253 +400,126 @@ void encode_alloc(const char* filename) {
 }
 
 int main() {
+	int argc;
+	argc = 2;
+	char **argv = new char*;
+	argv[0] = "./Test_Video.mkv";
+	argv[1] = "./111.sw";
 
-	const char* filename;
-	filename = "./Test_Video_result.mpeg";
+	const char *filename;
+	AVOutputFormat *fmt;
+	AVFormatContext *oc;
+	AVStream *audio_st, *video_st;
+	AVCodec *audio_codec, *video_codec;
+	video_codec = new AVCodec;
+	double audio_time, video_time;
+	int ret;
 
-
-	const char* audio_filename;
-	audio_filename = "./Test_Audio_result.sw";
-
+	/* Initialize libavcodec, and register all codecs and formats. */
 	av_register_all();
-
-	Audio_encode_alloc(audio_filename);
-	encode_alloc(filename);
-
-	AVStream *Video_Stream = NULL;
-
-	// 파일 로드
-	AVFormatContext* f_ctx = NULL;
-	AVCodec* dec;
-	AVCodec* Audio_dec;
-	AVCodecContext* dec_ctx;
-	AVCodecContext* Audio_dec_ctx;
-
-	AVFormatContext* oc = NULL;
-
-	avformat_open_input(&f_ctx, szFilePath, NULL, NULL);
-	int vst_idx = av_find_best_stream(f_ctx, AVMEDIA_TYPE_VIDEO, -1, -1, &dec, 0);
-	int ast_idx = av_find_best_stream(f_ctx, AVMEDIA_TYPE_AUDIO, -1, -1, &Audio_dec, 0);
-	dec_ctx = f_ctx->streams[vst_idx]->codec;
-	Audio_dec_ctx = f_ctx->streams[ast_idx]->codec;
-	avcodec_open2(dec_ctx, dec, NULL);
-	avcodec_open2(Audio_dec_ctx, Audio_dec, NULL);
-
-	oc = avformat_alloc_context();
-	snprintf(oc->filename, sizeof(oc->filename), "&s", filename);
-
-	av_log(NULL, AV_LOG_INFO, "File [%s] Open Success\n", szFilePath);
-
-	int ret = avformat_find_stream_info(f_ctx, NULL);
-	av_log(NULL, AV_LOG_INFO, "Get Stream Information Success\n");
-
-	// 디코딩 (대상 비디오/오디오 검색)
-	int nVSI = -1; ///> Video Stream Index
-	int nASI = -1; ///> Audio Stream Index
-	nVSI = av_find_best_stream(f_ctx, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
-	///> 오디오 스트림 찾기 (비디오 스트림 있다면 연관된)
-	nASI = av_find_best_stream(f_ctx, AVMEDIA_TYPE_AUDIO, -1, nVSI, NULL, 0);
-
-	// 디코딩 설정
-	AVCodecContext *pVCtx = f_ctx->streams[nVSI]->codec;		// 비디오 코덱의 Context
-	AVCodecContext *pACtx = f_ctx->streams[nASI]->codec;// 오디오 코덱의 Context
-	AVFrame *pVFrame = avcodec_alloc_frame();// 비디오 Frame (Allocation)
-	AVFrame *pAFrame = avcodec_alloc_frame();// 오디오 Frame (Allocation)
-	int bGotPicture = 0;		// Data 획득 구분
-	int bGotSound = 0;
-
-	AVCodec *pVideoCodec = avcodec_find_decoder(f_ctx->streams[nVSI]->codec->codec_id);
-	if (pVideoCodec == NULL) {
-		av_log(NULL, AV_LOG_ERROR, "No Decoder was Found\n");
-		exit(-1);
-	}
-	///> Initialize Codec Context as Decoder
-	if (avcodec_open2(f_ctx->streams[nVSI]->codec, pVideoCodec, NULL) < 0) {
-		av_log(NULL, AV_LOG_ERROR, "Fail to Initialize Decoder\n");
-		exit(-1);
+	if (argc != 2) {
+		printf("usage: %s output_file\n"
+			"API example program to output a media file with libavformat.\n"
+			"This program generates a synthetic audio and video stream, encodes and\n"
+			"muxes them into a file named output_file.\n"
+			"The output format is automatically guessed according to the file extension.\n"
+			"Raw images can also be output by using '%%d' in the filename.\n"
+			"\n", argv[0]);
+		return 1;
 	}
 
-	AVCodec *pAudioCodec = avcodec_find_decoder(f_ctx->streams[nASI]->codec->codec_id);
-	if (pAudioCodec == NULL) {
-		av_log(NULL, AV_LOG_ERROR, "No Decoder was Found\n");
-		exit(-1);
+	filename = argv[1];
+
+	/* allocate the output media context */
+	avformat_alloc_output_context2(&oc, NULL, NULL, filename);
+	if (!oc) {
+		printf("Could not deduce output format from file extension: using MPEG.\n");
+		avformat_alloc_output_context2(&oc, NULL, "mpeg", filename);
+	}
+	if (!oc) {
+		return 1;
 	}
 
-	if (avcodec_open2(f_ctx->streams[nASI]->codec, pAudioCodec, NULL) < 0) {
-		av_log(NULL, AV_LOG_ERROR, "Fail to Initialize Decoder\n");
-		exit(-1);
+	fmt = oc->oformat;
+
+	/* Add the audio and video streams using the default format codecs*/
+	/* and initialize the codecs. */
+	video_st = NULL;
+	audio_st = NULL;
+
+	if (fmt->video_codec != AV_CODEC_ID_NONE) {
+		video_st = add_stream(oc, &video_codec, fmt->video_codec);
 	}
-	////************//
-	//// AD_Decoding VAr
-	//// szFilePath_2
-	//const char *input_file = "./Test_Video.mkv";
-	//const char *output_file = "./sample-128kbps_result2.sw";
-	//AVCodec *codec;
-	//AVCodecContext *c = NULL;
-	//int len;
-	//FILE *f, *outfile;
-	//uint8_t inbuf[AUDIO_INBUF_SIZE + FF_INPUT_BUFFER_PADDING_SIZE];
-	//AVPacket avpkt;
-	//AVFrame *decoded_frame = NULL;
 
-	//av_init_packet(&avpkt);
+	if (fmt->audio_codec != AV_CODEC_ID_NONE) {
+		audio_st = add_stream(oc, &audio_codec, fmt->audio_codec);
+	}
 
-	//printf("Decode audio file %s to %s\n", input_file, output_file);
+	/* Now that all the parameters are set, we can open the audio and
+	* video codecs and allocate the necessary encode buffers. */
 
-	///* find the mpeg audio decoder */
-	//codec = avcodec_find_decoder(AV_CODEC_ID_MP2);
-	//if (!codec) {
-	//	fprintf(stderr, "Codec not found\n");
-	//	exit(1);
-	//}
+	if (video_st)
+		open_video(oc, video_codec, video_st);
+	if (audio_st)
+		//open_audio(oc, audio_codec, audio_st); 
 
-	//c = avcodec_alloc_context3(codec);
-	//if (!c) {
-	//	fprintf(stderr, "Could not allocate audio codec context\n");
-	//	exit(1);
-	//}
+		av_dump_format(oc, 0, filename, 1);
 
-	///* open it */
-	//if (avcodec_open2(c, codec, NULL) < 0) {
-	//	fprintf(stderr, "Could not open codec\n");
-	//	exit(1);
-	//}
-
-	//f = fopen(input_file, "rb");
-	//if (!f) {
-	//	fprintf(stderr, "Could not open %s\n", filename);
-	//	exit(1);
-	//}
-	//outfile = fopen(output_file, "wb");
-	//if (!outfile) {
-	//	av_free(c);
-	//	exit(1);
-	//}
-
-	///* decode until eof */
-	//avpkt.data = inbuf;
-	//avpkt.size = fread(inbuf, 1, AUDIO_INBUF_SIZE, f);
-
-	//while (avpkt.size > 0) {
-	//	int got_frame = 0;
-
-	//	if (!decoded_frame) {
-	//		if (!(decoded_frame = avcodec_alloc_frame())) {
-	//			fprintf(stderr, "Could not allocate audio frame\n");
-	//			exit(1);
-	//		}
-	//	}
-	//	else
-	//		avcodec_get_frame_defaults(decoded_frame);
-
-	//	len = avcodec_decode_audio4(c, decoded_frame, &got_frame, &avpkt);
-	//	if (len < 0) {
-	//		fprintf(stderr, "Error while decoding\n");
-	//		exit(1);
-	//	}
-	//	if (got_frame) {
-	//		/* if a frame has been decoded, output it */
-	//		int data_size = av_samples_get_buffer_size(NULL, c->channels,
-	//			decoded_frame->nb_samples,
-	//			c->sample_fmt, 1);
-	//		fwrite(decoded_frame->data[0], 1, data_size, outfile);
-	//	}
-	//	avpkt.size -= len;
-	//	avpkt.data += len;
-	//	avpkt.dts =
-	//		avpkt.pts = AV_NOPTS_VALUE;
-	//	if (avpkt.size < AUDIO_REFILL_THRESH) {
-	//		/* Refill the input buffer, to avoid trying to decode
-	//		 * incomplete frames. Instead of this, one could also use
-	//		 * a parser, or use a proper container format through
-	//		 * libavformat. */
-	//		memmove(inbuf, avpkt.data, avpkt.size);
-	//		avpkt.data = inbuf;
-	//		len = fread(avpkt.data + avpkt.size, 1,
-	//			AUDIO_INBUF_SIZE - avpkt.size, f);
-	//		if (len > 0)
-	//			avpkt.size += len;
-	//	}
-	//}
-
-	//fclose(outfile);
-	//fclose(f);
-
-	//avcodec_close(c);
-	//av_free(c);
-	//avcodec_free_frame(&decoded_frame);
-
-
-	////************//
-
-	clock_t before;
-	double  result;
-	before = clock();
-
-	int	len;
-	uint8_t inbuf[AUDIO_INBUF_SIZE + FF_INPUT_BUFFER_PADDING_SIZE];
-
-	int cnt = 0;
-	AVPacket packet;
-	AVPacket Audio_packet;
-	while (av_read_frame(f_ctx, &packet) >= 0) {
-		if (packet.stream_index == nVSI) {
-			// Decode Video
-			avcodec_decode_video2(dec_ctx, pVFrame, &bGotPicture, &packet);
-			if (bGotPicture) {
-				// Encode Video
-				//cout << "Get Picture\n";
-				encoding(pVFrame, packet);
-			}
-		}
-		else if (packet.stream_index == nASI) {
-			len = avcodec_decode_audio4(Audio_dec_ctx, pAFrame, &bGotSound, &packet);
-			if (len < 0) {
-				fprintf(stderr, "Error while decoding\n");
-				exit(1);
-			}
-			if (bGotSound) {
-				//cout << "Get Sound\n";
-				int data_size = av_samples_get_buffer_size(NULL, Audio_codec_c->channels, pAFrame->nb_samples, Audio_codec_c->sample_fmt, 1);
-				// Encode Audio
-				fwrite(pAFrame->data[0], 1, data_size, Audio_f);
-				//audio_encoding(pAFrame, packet);
-			}
-			//packet.data += len;
-			/////packet.dts =
-			//packet.pts = AV_NOPTS_VALUE;
-			//if (packet.size < AUDIO_REFILL_THRESH) {
-			//	/* Refill the input buffer, to avoid trying to decode
-			//	 * incomplete frames. Instead of this, one could also use
-			//	 * a parser, or use a proper container format through
-			//	 * libavformat. */
-			//	memmove(inbuf, packet.data, packet.size);
-			//	packet.data = inbuf;
-			//	len = fread(packet.data + packet.size, 1,
-			//		AUDIO_INBUF_SIZE - packet.size, f);
-			//	if (len > 0)
-			//		packet.size += len;
-			//}
+	/* open the output file, if needed */
+	if (!(fmt->flags & AVFMT_NOFILE)) {
+		ret = avio_open(&oc->pb, filename, AVIO_FLAG_WRITE);
+		if (ret < 0) {
+			fprintf(stderr, "Could not open '%s': %s\n", filename);
+			return 1;
 		}
 	}
 
-	//audio_encoding_ex();
+	/* Write the stream header, if any. */
+	ret = avformat_write_header(oc, NULL);
+	if (ret < 0) {
+		fprintf(stderr, "Error occurred when opening output file: %s\n");
+		return 1;
+	}
 
-	//result = (double)(clock() - before) / CLOCKS_PER_SEC;
-	result = clock() - before;
-	printf("걸린시간은 %5.2f 입니다.\n", result);
+	int Cnt = 0;
 
+	if (frame)
+		frame->pts = 0;
+	for (;;) {
+		/* Compute current audio and video time. */
+		audio_time = audio_st ? audio_st->pts.val * av_q2d(audio_st->time_base) : 0.0;
+		video_time = video_st ? video_st->pts.val * av_q2d(video_st->time_base) : 0.0;
+		Cnt++;
+		if (Cnt < 10)
+			break;
+		if ((!video_st || video_time >= STREAM_DURATION))
+			break;
+		/* write interleaved audio and video frames */
+		if (!video_st || (video_st && audio_st && audio_time < video_time)) {
+			//write_audio_frame(oc, audio_st);
+		}
+		else {
+			write_video_frame(oc, video_st);
+			frame->pts += av_rescale_q(1, video_st->codec->time_base, video_st->time_base);
+		}
+	}
+	/* Write the trailer, if any. The trailer must be written before you
+	* close the CodecContexts open when you wrote the header; otherwise
+	* av_write_trailer() may try to use memory that was freed on
+	* av_codec_close(). */
+	av_write_trailer(oc);
 
-	Stream_Info(f_ctx);
+	/* Close each codec. */
+	if (video_st)
+		close_video(oc, video_st);
+	if (audio_st)
+		//close_audio(oc, audio_st);  
+		if (!(fmt->flags & AVFMT_NOFILE))
+			/* Close the output file. */
+			avio_close(oc->pb);
 
-	avformat_close_input(&f_ctx);
-	av_free(Audio_codec_c);
-	avformat_network_deinit();
-
-	system("pause");
-
-	fclose(Audio_f);
-	fclose(f);
+	/* free the stream */
+	avformat_free_context(oc);
 
 	return 0;
 }
