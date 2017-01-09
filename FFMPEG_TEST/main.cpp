@@ -4,6 +4,10 @@
 #pragma warning(disable:4996)
 
 
+#define INBUF_SIZE 4096
+#define AUDIO_INBUF_SIZE 20480 //20480
+#define AUDIO_REFILL_THRESH 4096
+
 ///> Include FFMpeg
 #include <stdlib.h>
 #include <stdio.h>
@@ -16,15 +20,15 @@ using namespace std;
 
 
 extern "C" {
-#include <libavformat/avformat.h>
-#include <libavcodec/avcodec.h>
-#include <libavutil/avutil.h>
-#include <libavutil\imgutils.h>
-#include <libswscale/swscale.h>
-#include <libavformat/avio.h>
-#include <libavutil/opt.h>
-#include <libavutil/mathematics.h>
-#include <libswresample/swresample.h>
+#include <libavformat/avformat.h>		// Basic Format manage header
+#include <libavcodec/avcodec.h>			// For using codec header
+#include <libavutil/avutil.h>			// AV Convenience header
+#include <libavutil\imgutils.h>			// Img Convenience header
+#include <libswscale/swscale.h>			// External API header
+#include <libavformat/avio.h>			// Input & output header
+#include <libavutil/opt.h>				// option header
+#include <libavutil/mathematics.h>		// math header
+#include <libswresample/swresample.h>	// Resample header
 }
 ///> Library Link On Windows System
 #pragma comment( lib, "avformat.lib" )   
@@ -32,6 +36,7 @@ extern "C" {
 #pragma comment( lib, "avcodec.lib" )
 
 const char *szFilePath = "./Test_Video.mkv";
+
 const char *szSaveDecodedVideoFilePath = "./decodedVideo.yuv";
 const char *AVMediaType2Str(AVMediaType type);
 const char *AVCodecID2Str(AVCodecID id);
@@ -47,8 +52,8 @@ uint8_t *video_outbuf;
 int frame_count, video_outbuf_size;
 
 // Video encode_var
-AVCodec *codec;
-AVCodecContext* c = NULL;
+AVCodec *codec;						// codec for encode
+AVCodecContext* c = NULL;			// Codec Context
 int i, ret, x, y, got_output;
 FILE *f;
 AVFrame* frame;
@@ -69,54 +74,54 @@ AVCodecID Audio_Codec_id = AV_CODEC_ID_MP2;
 
 static int check_sample_fmt(AVCodec *codec, enum AVSampleFormat sample_fmt)
 {
-    const enum AVSampleFormat *p = codec->sample_fmts;
+	const enum AVSampleFormat *p = codec->sample_fmts;
 
-    while (*p != AV_SAMPLE_FMT_NONE) {
-        if (*p == sample_fmt)
-            return 1;
-        p++;
-    }
-    return 0;
+	while (*p != AV_SAMPLE_FMT_NONE) {
+		if (*p == sample_fmt)
+			return 1;
+		p++;
+	}
+	return 0;
 }
 
 /* just pick the highest supported samplerate */
 static int select_sample_rate(AVCodec *codec)
 {
-    const int *p;
-    int best_samplerate = 0;
+	const int *p;
+	int best_samplerate = 0;
 
-    if (!codec->supported_samplerates)
-        return 44100;
+	if (!codec->supported_samplerates)
+		return 44100;
 
-    p = codec->supported_samplerates;
-    while (*p) {
-        best_samplerate = FFMAX(*p, best_samplerate);
-        p++;
-    }
-    return best_samplerate;
+	p = codec->supported_samplerates;
+	while (*p) {
+		best_samplerate = FFMAX(*p, best_samplerate);
+		p++;
+	}
+	return best_samplerate;
 }
 
 /* select layout with the highest channel count */
 static int select_channel_layout(AVCodec *codec)
 {
-    const uint64_t *p;
-    uint64_t best_ch_layout = 0;
-    int best_nb_channells   = 0;
+	const uint64_t *p;
+	uint64_t best_ch_layout = 0;
+	int best_nb_channells = 0;
 
-    if (!codec->channel_layouts)
-        return AV_CH_LAYOUT_STEREO;
+	if (!codec->channel_layouts)
+		return AV_CH_LAYOUT_STEREO;
 
-    p = codec->channel_layouts;
-    while (*p) {
-        int nb_channels = av_get_channel_layout_nb_channels(*p);
+	p = codec->channel_layouts;
+	while (*p) {
+		int nb_channels = av_get_channel_layout_nb_channels(*p);
 
-        if (nb_channels > best_nb_channells) {
-            best_ch_layout    = *p;
-            best_nb_channells = nb_channels;
-        }
-        p++;
-    }
-    return best_ch_layout;
+		if (nb_channels > best_nb_channells) {
+			best_ch_layout = *p;
+			best_nb_channells = nb_channels;
+		}
+		p++;
+	}
+	return best_ch_layout;
 }
 
 void Audio_encode_alloc(const char* audio_filename) {
@@ -213,8 +218,9 @@ int main() {
 	const char* filename;
 	filename = "./Test_Video_result.mpeg";
 
+
 	const char* audio_filename;
-	audio_filename = "./Test_Audio_result.mp2";
+	audio_filename = "./Test_Audio_result.sw";
 
 	av_register_all();
 
@@ -256,11 +262,11 @@ int main() {
 	nASI = av_find_best_stream(f_ctx, AVMEDIA_TYPE_AUDIO, -1, nVSI, NULL, 0);
 
 	// 디코딩 설정
-	AVCodecContext *pVCtx = f_ctx->streams[nVSI]->codec;
-	AVCodecContext *pACtx = f_ctx->streams[nASI]->codec;
-	AVFrame *pVFrame = avcodec_alloc_frame();
-	AVFrame *pAFrame = avcodec_alloc_frame();
-	int bGotPicture = 0;
+	AVCodecContext *pVCtx = f_ctx->streams[nVSI]->codec;		// 비디오 코덱의 Context
+	AVCodecContext *pACtx = f_ctx->streams[nASI]->codec;// 오디오 코덱의 Context
+	AVFrame *pVFrame = avcodec_alloc_frame();// 비디오 Frame (Allocation)
+	AVFrame *pAFrame = avcodec_alloc_frame();// 오디오 Frame (Allocation)
+	int bGotPicture = 0;		// Data 획득 구분
 	int bGotSound = 0;
 
 	AVCodec *pVideoCodec = avcodec_find_decoder(f_ctx->streams[nVSI]->codec->codec_id);
@@ -284,12 +290,115 @@ int main() {
 		av_log(NULL, AV_LOG_ERROR, "Fail to Initialize Decoder\n");
 		exit(-1);
 	}
+	////************//
+	//// AD_Decoding VAr
+	//// szFilePath_2
+	//const char *input_file = "./Test_Video.mkv";
+	//const char *output_file = "./sample-128kbps_result2.sw";
+	//AVCodec *codec;
+	//AVCodecContext *c = NULL;
+	//int len;
+	//FILE *f, *outfile;
+	//uint8_t inbuf[AUDIO_INBUF_SIZE + FF_INPUT_BUFFER_PADDING_SIZE];
+	//AVPacket avpkt;
+	//AVFrame *decoded_frame = NULL;
 
-	pVCtx->colorspace;
+	//av_init_packet(&avpkt);
+
+	//printf("Decode audio file %s to %s\n", input_file, output_file);
+
+	///* find the mpeg audio decoder */
+	//codec = avcodec_find_decoder(AV_CODEC_ID_MP2);
+	//if (!codec) {
+	//	fprintf(stderr, "Codec not found\n");
+	//	exit(1);
+	//}
+
+	//c = avcodec_alloc_context3(codec);
+	//if (!c) {
+	//	fprintf(stderr, "Could not allocate audio codec context\n");
+	//	exit(1);
+	//}
+
+	///* open it */
+	//if (avcodec_open2(c, codec, NULL) < 0) {
+	//	fprintf(stderr, "Could not open codec\n");
+	//	exit(1);
+	//}
+
+	//f = fopen(input_file, "rb");
+	//if (!f) {
+	//	fprintf(stderr, "Could not open %s\n", filename);
+	//	exit(1);
+	//}
+	//outfile = fopen(output_file, "wb");
+	//if (!outfile) {
+	//	av_free(c);
+	//	exit(1);
+	//}
+
+	///* decode until eof */
+	//avpkt.data = inbuf;
+	//avpkt.size = fread(inbuf, 1, AUDIO_INBUF_SIZE, f);
+
+	//while (avpkt.size > 0) {
+	//	int got_frame = 0;
+
+	//	if (!decoded_frame) {
+	//		if (!(decoded_frame = avcodec_alloc_frame())) {
+	//			fprintf(stderr, "Could not allocate audio frame\n");
+	//			exit(1);
+	//		}
+	//	}
+	//	else
+	//		avcodec_get_frame_defaults(decoded_frame);
+
+	//	len = avcodec_decode_audio4(c, decoded_frame, &got_frame, &avpkt);
+	//	if (len < 0) {
+	//		fprintf(stderr, "Error while decoding\n");
+	//		exit(1);
+	//	}
+	//	if (got_frame) {
+	//		/* if a frame has been decoded, output it */
+	//		int data_size = av_samples_get_buffer_size(NULL, c->channels,
+	//			decoded_frame->nb_samples,
+	//			c->sample_fmt, 1);
+	//		fwrite(decoded_frame->data[0], 1, data_size, outfile);
+	//	}
+	//	avpkt.size -= len;
+	//	avpkt.data += len;
+	//	avpkt.dts =
+	//		avpkt.pts = AV_NOPTS_VALUE;
+	//	if (avpkt.size < AUDIO_REFILL_THRESH) {
+	//		/* Refill the input buffer, to avoid trying to decode
+	//		 * incomplete frames. Instead of this, one could also use
+	//		 * a parser, or use a proper container format through
+	//		 * libavformat. */
+	//		memmove(inbuf, avpkt.data, avpkt.size);
+	//		avpkt.data = inbuf;
+	//		len = fread(avpkt.data + avpkt.size, 1,
+	//			AUDIO_INBUF_SIZE - avpkt.size, f);
+	//		if (len > 0)
+	//			avpkt.size += len;
+	//	}
+	//}
+
+	//fclose(outfile);
+	//fclose(f);
+
+	//avcodec_close(c);
+	//av_free(c);
+	//avcodec_free_frame(&decoded_frame);
+
+
+	////************//
 
 	clock_t before;
 	double  result;
 	before = clock();
+
+	int	len;
+	uint8_t inbuf[AUDIO_INBUF_SIZE + FF_INPUT_BUFFER_PADDING_SIZE];
 
 	int cnt = 0;
 	AVPacket packet;
@@ -303,25 +412,44 @@ int main() {
 				//cout << "Get Picture\n";
 				encoding(pVFrame, packet);
 			}
-		}else if (packet.stream_index == nASI) {
-			avcodec_decode_audio4(Audio_dec_ctx, pAFrame, &bGotSound, &packet);
+		}
+		else if (packet.stream_index == nASI) {
+			len = avcodec_decode_audio4(Audio_dec_ctx, pAFrame, &bGotSound, &packet);
+			if (len < 0) {
+				fprintf(stderr, "Error while decoding\n");
+				exit(1);
+			}
 			if (bGotSound) {
 				//cout << "Get Sound\n";
 				int data_size = av_samples_get_buffer_size(NULL, Audio_codec_c->channels, pAFrame->nb_samples, Audio_codec_c->sample_fmt, 1);
 				// Encode Audio
-				//fwrite(pAFrame->data[0], 1, data_size, Audio_f);
-				audio_encoding(pAFrame, packet);
+				fwrite(pAFrame->data[0], 1, data_size, Audio_f);
+				//audio_encoding(pAFrame, packet);
 			}
+			//packet.data += len;
+			/////packet.dts =
+			//packet.pts = AV_NOPTS_VALUE;
+			//if (packet.size < AUDIO_REFILL_THRESH) {
+			//	/* Refill the input buffer, to avoid trying to decode
+			//	 * incomplete frames. Instead of this, one could also use
+			//	 * a parser, or use a proper container format through
+			//	 * libavformat. */
+			//	memmove(inbuf, packet.data, packet.size);
+			//	packet.data = inbuf;
+			//	len = fread(packet.data + packet.size, 1,
+			//		AUDIO_INBUF_SIZE - packet.size, f);
+			//	if (len > 0)
+			//		packet.size += len;
+			//}
 		}
 	}
 
-	audio_encoding_ex();
+	//audio_encoding_ex();
 
 	//result = (double)(clock() - before) / CLOCKS_PER_SEC;
 	result = clock() - before;
 	printf("걸린시간은 %5.2f 입니다.\n", result);
 
-	
 
 	Stream_Info(f_ctx);
 
@@ -425,7 +553,7 @@ void audio_encoding(AVFrame* pAFrame, AVPacket packet) {
 			av_free_packet(&pkt);
 		}
 	}
-	
+
 	av_freep(&Audio_samples);
 	avcodec_free_frame(&Audio_frame);
 }
