@@ -109,7 +109,7 @@ int main()
 	//c->time_base.den = ifmt_ctx->streams[nVSI]->codec->time_base.den;
 	c->time_base = { 1,22 };
 	c->pix_fmt = ifmt_ctx->streams[nVSI]->codec->pix_fmt;
-	c->bit_rate = 966 * 1000;
+	c->bit_rate = 5000;
 
 	if (avcodec_open2(c, codec, NULL) < 0) {
 		fprintf(stderr, "Could not open codec\n");
