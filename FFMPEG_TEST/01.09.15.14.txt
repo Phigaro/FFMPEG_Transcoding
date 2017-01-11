@@ -1,0 +1,303 @@
+///> Include FFMpeg
+
+#define _CRT_SECURE_NO_DEPRECATE
+#pragma warning(disable:4996)
+
+extern "C" {
+#ifdef __cplusplus
+#define __STDC_CONSTANT_MACROS
+#ifdef _STDINT_H
+#undef _STDINT_H
+#endif
+#include <libavformat/avformat.h>
+#include <libavutil/opt.h>
+#include <libavutil/imgutils.h>
+#include <libswscale/swscale.h>
+
+#endif
+}
+
+#include <iostream>
+#include <windows.h>
+
+using namespace std;
+///> Library Link On Windows System
+#pragma comment( lib, "avformat.lib" )   
+#pragma comment( lib, "avutil.lib" )
+#pragma comment( lib, "avcodec.lib" )
+#pragma comment( lib, "swscale")
+
+
+static void write_ascii_frame(const char *szFileName, const AVFrame *pVframe);
+
+int main(void)
+{
+	AVOutputFormat *ofmt = NULL;
+	AVFormatContext *ifmt_ctx = NULL, *ofmt_ctx = NULL;
+
+	AVCodecID codec_id = AV_CODEC_ID_H264;
+	const char *szFilePath = "test.mpg";
+	const char *outputFilePath = "Remuxing_result.mpg";
+	uint8_t endcode[] = { 0, 0, 1, 0xb7 };
+	///> Initialize libavformat and register all the muxers, demuxers and protocols.
+	av_register_all();
+	FILE *f;
+	///> Do global initialization of network components.
+	avformat_network_init();
+
+	int ret;
+	AVFormatContext *pFmtCtx = NULL;
+	if ((ret = avformat_open_input(&ifmt_ctx, szFilePath, 0, 0)) < 0) {
+		fprintf(stderr, "Could not open input file '%s'", szFilePath);
+	}
+	if ((ret = avformat_find_stream_info(ifmt_ctx, 0)) < 0) {
+		fprintf(stderr, "Failed to retrieve input stream information");
+	}
+	av_dump_format(ifmt_ctx, 0, szFilePath, 0);
+	avformat_alloc_output_context2(&ofmt_ctx, NULL, NULL, outputFilePath);
+	if (!ofmt_ctx) {
+		fprintf(stderr, "Could not create output context\n");
+		ret = AVERROR_UNKNOWN;
+	}
+	ofmt = ofmt_ctx->oformat;
+	for (int i = 0; i < ifmt_ctx->nb_streams; i++) {
+		AVStream *in_stream = ifmt_ctx->streams[i];
+		AVStream *out_stream = avformat_new_stream(ofmt_ctx, in_stream->codec->codec);
+		if (!out_stream) {
+			fprintf(stderr, "Failed allocating output stream\n");
+			ret = AVERROR_UNKNOWN;
+		}
+		ret = avcodec_copy_context(out_stream->codec, in_stream->codec);
+		if (ret < 0) {
+			fprintf(stderr, "Failed to copy context from input to output stream codec context\n");
+		}
+		if (ofmt_ctx->oformat->flags & AVFMT_GLOBALHEADER)
+			out_stream->codec->flags |= CODEC_FLAG_GLOBAL_HEADER;
+	}
+	av_dump_format(ofmt_ctx, 0, outputFilePath, 1);
+	if (!(ofmt->flags & AVFMT_NOFILE)) {
+		ret = avio_open(&ofmt_ctx->pb, outputFilePath, AVIO_FLAG_WRITE);
+		if (ret < 0) {
+			fprintf(stderr, "Could not open output file '%s'", outputFilePath);
+		}
+	}
+	ret = avformat_write_header(ofmt_ctx, NULL);
+	if (ret < 0) {
+		fprintf(stderr, "Error occurred when opening output file\n");
+	}
+	///> Open an input stream and read the header. 
+	ret = avformat_open_input(&pFmtCtx, szFilePath, NULL, NULL);
+
+	if (ret != 0) {
+		av_log(NULL, AV_LOG_ERROR, "File [%s] Open Fail (ret: %d)\n", ret);
+		exit(-1);
+	}
+	av_log(NULL, AV_LOG_INFO, "File [%s] Open Success\n", szFilePath);
+	av_log(NULL, AV_LOG_INFO, "Format: %s\n", pFmtCtx->iformat->name);
+
+	///> Read packets of a media file to get stream information. 
+	ret = avformat_find_stream_info(pFmtCtx, NULL);
+	if (ret < 0) {
+		av_log(NULL, AV_LOG_ERROR, "Fail to get Stream Information\n");
+		exit(-1);
+	}
+	av_log(NULL, AV_LOG_INFO, "Get Stream Information Success\n");
+
+	///> Find Video Stream
+	int nVSI = -1;
+	int nASI = -1;
+	int i;
+	for (i = 0; i < pFmtCtx->nb_streams; i++) {
+		if (nVSI < 0 && pFmtCtx->streams[i]->codec->codec_type == AVMEDIA_TYPE_VIDEO) {
+			nVSI = i;
+		}
+		else if (nASI < 0 && pFmtCtx->streams[i]->codec->codec_type == AVMEDIA_TYPE_AUDIO) {
+			nASI = i;
+		}
+	}
+
+	if (nVSI < 0 && nASI < 0) {
+		av_log(NULL, AV_LOG_ERROR, "No Video & Audio Streams were Found\n");
+		exit(-1);
+	}
+
+	///> Find Video Decoder
+	AVCodec *pVideoCodec = avcodec_find_decoder(pFmtCtx->streams[nVSI]->codec->codec_id);
+	if (pVideoCodec == NULL) {
+		av_log(NULL, AV_LOG_ERROR, "No Video Decoder was Found\n");
+		exit(-1);
+	}
+
+	///> Initialize Codec Context as Decoder
+	if (avcodec_open2(pFmtCtx->streams[nVSI]->codec, pVideoCodec, NULL) < 0) {
+		av_log(NULL, AV_LOG_ERROR, "Fail to Initialize Decoder\n");
+		exit(-1);
+	}
+
+	///> Find Audio Decoder
+	AVCodec *pAudioCodec = avcodec_find_decoder(pFmtCtx->streams[nASI]->codec->codec_id);
+	if (pAudioCodec == NULL) {
+		av_log(NULL, AV_LOG_ERROR, "No Audio Decoder was Found\n");
+		exit(-1);
+	}
+
+	///> Initialize Codec Context as Decoder
+	if (avcodec_open2(pFmtCtx->streams[nASI]->codec, pAudioCodec, NULL) < 0) {
+		av_log(NULL, AV_LOG_ERROR, "Fail to Initialize Decoder\n");
+		exit(-1);
+	}
+
+	AVCodecContext *pVCtx = pFmtCtx->streams[nVSI]->codec;
+	//AVCodecContext *pVCtx = NULL;
+	//pVCtx = avcodec_alloc_context3(pVideoCodec);
+	//avcodec_open2(pVCtx, pVideoCodec, NULL);
+	AVCodecContext *pACtx = pFmtCtx->streams[nASI]->codec;
+
+	AVPacket pkt, outpkt;
+	AVFrame* pVFrame, *pAFrame;
+	int bGotPicture = 0;   // flag for video decoding
+	int bGotSound = 0;      // flag for audio decoding
+
+	int bPrint = 0;   // 비디오 첫 장면만 파일로 남기기 위한 임시 flag 입니다
+
+	pVFrame = av_frame_alloc();
+	pAFrame = av_frame_alloc();
+	AVCodec *codec;
+	AVCodec *Acodec;
+	AVCodecContext *c = NULL;
+	AVCodecContext *ac = NULL;
+	Acodec = avcodec_find_encoder(AV_CODEC_ID_MP2);
+	codec = avcodec_find_encoder(codec_id);
+	if (!codec) {
+		fprintf(stderr, "Codec not found\n");
+		exit(1);
+	}
+	ac = avcodec_alloc_context3(Acodec);
+	c = avcodec_alloc_context3(codec);
+	if (!c) {
+		fprintf(stderr, "Could not allocate video codec context\n");
+		exit(1);
+	}
+	//struct SwsContext *resize;
+	//resize = sws_getContext(640, 358, AV_PIX_FMT_YUV420P, 640 * 2, 358 * 2, AV_PIX_FMT_YUV420P, SWS_BICUBIC, NULL, NULL, NULL);
+	/* put sample parameters */
+	c->bit_rate = 300000;
+	c->rc_max_rate = 300 * 1000;
+	c->rc_initial_buffer_occupancy = c->rc_max_rate;
+	/* resolution must be a multiple of two */
+	c->width = pFmtCtx->streams[nVSI]->codec->width;
+	c->height = pFmtCtx->streams[nVSI]->codec->height;
+	/* frames per second */
+	c->rc_buffer_size = c->rc_max_rate;
+	c->time_base.num = 1;
+	c->gop_size = 10; /* emit one intra frame every ten frames */
+	c->time_base.den = 25;
+
+	//c->gop_size = 10; /* emit one intra frame every ten frames */
+	//c->max_b_frames = 1;
+	c->pix_fmt = AV_PIX_FMT_YUV420P;
+
+	if (codec_id == AV_CODEC_ID_H264)
+		av_opt_set(c->priv_data, "preset", "slow", 0);
+	else
+		av_opt_set(c->priv_data, "preset", "slow", 0);
+	/* open it */
+	if (avcodec_open2(c, codec, NULL) < 0) {
+		fprintf(stderr, "Could not open codec\n");
+		exit(1);
+	}
+	//f = fopen("output.mp4", "wb");
+
+	AVFrame *frame;
+
+	frame = av_frame_alloc();
+
+	i = 0;
+	while (av_read_frame(pFmtCtx, &pkt) >= 0) {
+		///> Decoding
+		if (pkt.stream_index == nVSI) {
+			if (avcodec_decode_video2(pVCtx, pVFrame, &bGotPicture, &pkt) >= 0) {
+				if (bGotPicture) {
+					///> Ready to Render Image
+					//av_log(NULL, AV_LOG_INFO, "Got Picture\n");
+					//fflush(stdout);
+					//pVFrame->pts = i;
+					av_init_packet(&outpkt);
+					outpkt.data = NULL;    // packet data will be allocated by the encoder
+					outpkt.size = 0;
+					//   sws_scale(resize, pVFrame->data, pVFrame->linesize, 0, 358, frame->data, frame->linesize);
+					ret = avcodec_encode_video2(c, &outpkt, pVFrame, &bGotPicture);
+					if (bGotPicture) {
+						printf("Write frame %3d (size=%5d)\n", i, outpkt.size);
+						av_interleaved_write_frame(ofmt_ctx, &outpkt);
+						//fwrite(outpkt.data, 1, outpkt.size, f);
+						av_free_packet(&outpkt);
+					}
+					i++;
+				}
+			}
+		}
+		else if (pkt.stream_index == nASI) {
+			if (avcodec_decode_audio4(pACtx, pAFrame, &bGotSound, &pkt) >= 0) {
+				if (bGotSound) {
+					av_interleaved_write_frame(ofmt_ctx, &pkt);
+				}
+			}
+			// else ( < 0 ) : Decoding Error
+		}
+		///> Free the packet that was allocated by av_read_frame
+		av_free_packet(&pkt);
+	}
+	for (bGotPicture = 1; bGotPicture; i++) {
+		fflush(stdout);
+		ret = avcodec_encode_video2(c, &pkt, NULL, &bGotPicture);
+		if (ret < 0) {
+			fprintf(stderr, "Error encoding frame\n");
+			exit(1);
+		}
+		if (bGotPicture) {
+			printf("Write frame %3d (size=%5d)\n", i, pkt.size);
+			//fwrite(pkt.data, 1, pkt.size, f);
+			av_interleaved_write_frame(ofmt_ctx, &pkt);
+			av_free_packet(&pkt);
+		}
+	}
+
+	/* add sequence end code to have a real mpeg file */
+	//fwrite(endcode, 1, sizeof(endcode), f);
+	av_write_trailer(ofmt_ctx);
+	//fclose(f);
+	avcodec_close(c);
+	av_free(c);
+	av_free(pVFrame);
+	av_free(pAFrame);
+
+	///> Close an opened input AVFormatContext. 
+	avformat_close_input(&pFmtCtx);
+
+	///> Undo the initialization done by avformat_network_init.
+	avformat_network_deinit();
+	return 0;
+}
+
+static void write_ascii_frame(const char *szFileName, const AVFrame *frame)
+{
+	int x, y;
+	uint8_t *p0, *p;
+	const char arrAsciis[] = "m.-+#";
+
+	FILE* fp = fopen(szFileName, "w");
+	if (fp) {
+		/* Trivial ASCII grayscale display. */
+		p0 = frame->data[0];
+		for (y = 0; y < frame->height; y++) {
+			p = p0;
+			for (x = 0; x < frame->width; x++)
+				putc(arrAsciis[*(p++) / 52], fp);
+			putc('\n', fp);
+			p0 += frame->linesize[0];
+		}
+		fflush(fp);
+		fclose(fp);
+	}
+}

@@ -27,19 +27,18 @@ using namespace std;
 #pragma comment( lib, "avcodec.lib" )
 #pragma comment( lib, "swscale")
 
-
-int main(void)
+int main()
 {
 	AVOutputFormat   *ofmt = NULL;
 	AVFormatContext *ifmt_ctx = NULL;
 	AVFormatContext *ofmt_ctx = NULL;
 
 	//AVCodecID   v_codec_id = AV_CODEC_ID_H264;
-	AVCodecID   v_codec_id = AV_CODEC_ID_MPEG2VIDEO;
+	AVCodecID   v_codec_id = AV_CODEC_ID_H264;
 	AVCodecID   a_codec_id = AV_CODEC_ID_MP2;
 
 	const char   *szFilePath = "sample2.mp4";//x264
-	const char   *outputfile = "output.mpg";
+	const char   *outputfile = "output.mp4";
 
 	av_register_all();
 
@@ -58,7 +57,11 @@ int main(void)
 
 	av_dump_format(ifmt_ctx, 0, szFilePath, 0);
 
+	//avformat_alloc_output_context2(&ofmt_ctx, NULL, ifmt_ctx->iformat->name, outputfile);
+	// m4a, mj2 미지원 ifmt_ctx->iformat->name 예외 처리 필요
+
 	avformat_alloc_output_context2(&ofmt_ctx, NULL, "mp4", outputfile);
+	//avformat_alloc_output_context2(&ofmt_ctx, NULL, NULL, outputfile);
 
 	if (!ofmt_ctx) {
 		fprintf(stderr, "Could not create output context\n");
@@ -91,6 +94,8 @@ int main(void)
 		return 0;
 	}
 
+	//codec = avcodec_find_encoder_by_name("libopenh264");
+
 	c = avcodec_alloc_context3(codec);
 	if (!c) {
 		fprintf(stderr, "Could not allocate video codec context\n");
@@ -100,10 +105,11 @@ int main(void)
 	c->profile = FF_PROFILE_H264_BASELINE;
 	c->width = ifmt_ctx->streams[nVSI]->codecpar->width;
 	c->height = ifmt_ctx->streams[nVSI]->codecpar->height;
-	c->time_base.num = ifmt_ctx->streams[nVSI]->codec->time_base.num;
-	c->time_base.den = ifmt_ctx->streams[nVSI]->codec->time_base.den;
+	//	c->time_base.num = ifmt_ctx->streams[nVSI]->codec->time_base.num;
+	//c->time_base.den = ifmt_ctx->streams[nVSI]->codec->time_base.den;
+	c->time_base = { 1,22 };
 	c->pix_fmt = ifmt_ctx->streams[nVSI]->codec->pix_fmt;
-	c->bit_rate = 20 * 1000;
+	c->bit_rate = 966 * 1000;
 
 	if (avcodec_open2(c, codec, NULL) < 0) {
 		fprintf(stderr, "Could not open codec\n");
@@ -171,7 +177,7 @@ int main(void)
 
 	AVPacket pkt, outpkt;
 	AVFrame* pVFrame, *pAFrame;
-	int bGotPicture = 0;   // flag for video decoding
+	int bGotPicture = 0;	// flag for video decoding
 	int bGotSound = 0;      // flag for audio decoding
 
 	pVFrame = av_frame_alloc();
@@ -241,5 +247,6 @@ int main(void)
 	///> Undo the initialization done by avformat_network_init.
 	avformat_network_deinit();
 #endif
+	//system("pause");
 	return 0;
 }
