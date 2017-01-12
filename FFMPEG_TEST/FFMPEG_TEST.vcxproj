@@ -41,7 +41,7 @@
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
     <PlatformToolset>v140</PlatformToolset>
-    <CharacterSet>MultiByte</CharacterSet>
+    <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
@@ -69,13 +69,12 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
-    <OutDir>bin\</OutDir>
-    <IncludePath>$(VC_IncludePath);C:\Users\Hawkeye\Documents\FFMPEG_Transcoding\FFMPEG_TEST\ffmpeg\include;$(WindowsSDK_IncludePath);$(SolutionDir)ffmpeg\include;$(SolutionDir)ffmpeg\include\libswscale;$(SolutionDir)ffmpeg\include\libswresample;$(SolutionDir)ffmpeg\include\libpostproc;$(SolutionDir)ffmpeg\include\libavutil;$(SolutionDir)ffmpeg\include\libavformat;$(SolutionDir)ffmpeg\include\libavfilter;$(SolutionDir)ffmpeg\include\libavcodec;$(SolutionDir)ffmpeg\include\libavdevice;$(IncludePath)</IncludePath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(SolutionDir)ffmpeg\include;$(IncludePath)</IncludePath>
     <LibraryPath>C:\Users\Hawkeye\Documents\FFMPEG_Transcoding\FFMPEG_TEST\ffmpeg\lib;$(VC_LibraryPath_x86);$(WindowsSDK_LibraryPath_x86);$(NETFXKitsDir)Lib\um\x86;$(SolutionDir)ffmpeg\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <IncludePath>$(VC_IncludePath);C:\Users\Hawkeye\Documents\FFMPEG_Transcoding\FFMPEG_TEST\ffmpeg\include;$(WindowsSDK_IncludePath);$(SolutionDir)ffmpeg\include;$(SolutionDir)ffmpeg\include\libswscale;$(SolutionDir)ffmpeg\include\libswresample;$(SolutionDir)ffmpeg\include\libpostproc;$(SolutionDir)ffmpeg\include\libavutil;$(SolutionDir)ffmpeg\include\libavformat;$(SolutionDir)ffmpeg\include\libavfilter;$(SolutionDir)ffmpeg\include\libavcodec;$(SolutionDir)ffmpeg\include\libavdevice;$(IncludePath)</IncludePath>
-    <LibraryPath>C:\Users\Hawkeye\Documents\FFMPEG_Transcoding\FFMPEG_TEST\ffmpeg\lib;$(VC_LibraryPath_x86);$(WindowsSDK_LibraryPath_x86);$(NETFXKitsDir)Lib\um\x86;$(SolutionDir)ffmpeg\lib;$(LibraryPath)</LibraryPath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(SolutionDir)ffmpeg\include;$(SolutionDir)ffmpeg\include\libswscale;$(SolutionDir)ffmpeg\include\libswresample;$(SolutionDir)ffmpeg\include\libpostproc;$(SolutionDir)ffmpeg\include\libavutil;$(SolutionDir)ffmpeg\include\libavformat;$(SolutionDir)ffmpeg\include\libavfilter;$(SolutionDir)ffmpeg\include\libavcodec;$(SolutionDir)ffmpeg\include\libavdevice;$(IncludePath)</IncludePath>
+    <LibraryPath>$(VC_LibraryPath_x86);$(WindowsSDK_LibraryPath_x86);$(NETFXKitsDir)Lib\um\x86;$(SolutionDir)ffmpeg\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <IncludePath>C:\Users\Hawkeye\Documents\FFMPEG_Transcoding\FFMPEG_TEST\ffmpeg\include;$(IncludePath)</IncludePath>
@@ -102,8 +101,12 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
-      <AdditionalIncludeDirectories>C:\Users\Hawkeye\Downloads\FFMPEG_Transcoding-cd3937804c9baf8aa2fc1492ffbed7f51ef50138\FFMPEG_TEST\ffmpeg\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\Hawkeye\Documents\FFMPEG_Transcoding\FFMPEG_TEST\ffmpeg\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>C:\Users\Hawkeye\Documents\FFMPEG_Transcoding\FFMPEG_TEST\ffmpeg\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>avformat.lib;opt.lib;imgutils.lib;swscale.lib;avfilter.lib</AdditionalDependencies>
+    </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <ClCompile>
@@ -138,32 +141,6 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
-    <ClCompile Include="muxing.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <Text Include="01.04.11.09.txt" />
-    <Text Include="01.03.txt" />
-    <Text Include="01.04.15.48.txt" />
-    <Text Include="01.04.16.11.txt" />
-    <Text Include="01.04.16.56 Muxing.txt" />
-    <Text Include="01.05.17.05.txt" />
-    <Text Include="01.09.13.36.txt" />
-    <Text Include="01.09.15.14.txt" />
-    <Text Include="01.10.08.30.txt" />
-    <Text Include="temp.txt" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="01.04.11.22.txt" />
-    <None Include="01.04.15.24.txt" />
-    <None Include="fossies.org 의 transcoding 자료 .txt" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="Channel_layout.h" />
-    <ClInclude Include="decoding.h" />
-    <ClInclude Include="encoding.h" />
-    <ClInclude Include="mun.h" />
-    <ClInclude Include="Mywork.h" />
-    <ClInclude Include="거진 완성된 파일.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
